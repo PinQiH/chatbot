@@ -1,6 +1,7 @@
 import streamlit as st
 from openai import OpenAI
 import matplotlib.pyplot as plt
+import requests
 
 # 假設這是存儲在某個地方的聊天歷史數據
 chat_history = {
@@ -52,7 +53,7 @@ chat_history = {
 }
 
 # 假設這是可選擇的助理模型和數據庫來源
-assistant_models = ["gpt-3.5-turbo", "gpt-4"]
+assistant_models = ["gpt-3.5-turbo", "gpt-4", "yabi/breeze-7b-instruct-v1_0_q6_k", "jcai/taide-lx-7b-chat:latest", "llama3:latest"]
 database_sources = ["Database 1", "Database 2", "Database 3"]
 
 # 登入檢查和處理函數
@@ -61,6 +62,19 @@ def check_login(username, password):
     # 如果登入成功，返回 True
     # 這裡我假設任何非空的用戶名和密碼都代表登入成功
     return username != "" and password != ""
+
+def generate_ollama_text(model, prompt):
+    url = "http://localhost:11434/api/generate"
+    data = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+    }
+    response = requests.post(url, json=data)
+    if response.status_code == 200:
+        return response.json().get('response', '無返回響應。')
+    else:
+        return f'發生錯誤: {response.status_code}'
 
 # 建立側邊欄並輸入 API Key
 with st.sidebar:
@@ -75,7 +89,7 @@ with st.sidebar:
 			if 'database_choices' in st.session_state:
 				del st.session_state.database_choices
 			st.session_state.selection_locked = False
-			st.experimental_rerun()
+			st.rerun()
 
 	# 增加登入選項
 	# 如果已經登入，顯示用戶名，否則顯示登入表單
@@ -142,7 +156,7 @@ col1, col2, col3 = st.columns(3)
 # 在第一列中放置標題
 with col1:
 	# 主要內容區
-	current_title = st.session_state.get('current_history', '💬 Chatbot')
+	current_title = st.session_state.get('current_history', '💬Chatbot')
 	st.title(current_title)
 
 # 如果已經開始聊天（messages 至少有一條訊息），則禁用選項
@@ -187,21 +201,22 @@ for msg in st.session_state.messages:
 
 # 處理新的聊天輸入
 if prompt := st.chat_input():
-    if not openai_api_key:
-        st.info("Please add your OpenAI API key to continue.")
-        st.stop()
-	
-	# 儲存選擇的模型和數據庫來源
     st.session_state.model_choice = model_choice
     st.session_state.database_choices = database_choices
-
-	# 發送訊息後，鎖定模型和數據庫的選擇
-    st.session_state.selection_locked = True
-	
-    client = OpenAI(api_key=openai_api_key)
     st.session_state.messages.append({"role": "user", "content": prompt})
     st.chat_message("user").write(prompt)
-    response = client.chat.completions.create(model=model_choice, messages=st.session_state.messages)
-    msg = response.choices[0].message.content
-    st.session_state.messages.append({"role": "assistant", "content": msg})
-    st.chat_message("assistant").write(msg)
+
+    if "gpt" not in model_choice:
+        response = generate_ollama_text(model_choice, prompt)
+    else:
+        if not openai_api_key:
+            st.info("Please add your OpenAI API key to continue.")
+            st.stop()
+        client = OpenAI(api_key=openai_api_key)
+        response = client.chat.completions.create(model=model_choice, messages=st.session_state.messages)
+        response = response.choices[0].message.content
+
+    st.session_state.messages.append({"role": "assistant", "content": response})
+    st.chat_message("assistant").write(response)
+
+    st.session_state.selection_locked = True
