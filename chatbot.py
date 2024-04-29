@@ -63,7 +63,7 @@ chat_history = {
 
 # 假設這是可選擇的助理模型和數據庫來源
 assistant_models = ["gpt-3.5-turbo", "gpt-4", "yabi/breeze-7b-instruct-v1_0_q6_k", "jcai/taide-lx-7b-chat:latest", "llama3:latest"]
-database_sources = ["NCKUH"]
+database_sources = ["None", "NCKUH_Brian", "NCKUH_Gary"]
 
 # 登入檢查和處理函數
 def check_login(username, password):
@@ -86,7 +86,7 @@ def generate_ollama_text(model, prompt):
         return f'發生錯誤: {response.status_code}'
 
 # Function to process PDFs and extract contents
-def process_pdfs(directory):
+def process_pdfs_brian(directory):
     pdf_files = [f for f in os.listdir(directory) if f.endswith('.pdf')]
     all_elements = []
     for pdf_file in pdf_files:
@@ -121,13 +121,9 @@ def add_documents_to_stores(elements):
     retriever.vectorstore.add_documents(summary_elements)
     retriever.docstore.mset(list(zip(doc_ids, elements)))
 
-# Load documents (this should be done once, not on every rerun unless necessary)
-pdf_elements = process_pdfs("./NCKUH")
-add_documents_to_stores(pdf_elements)
-
 # 建立側邊欄並輸入 API Key
 with st.sidebar:
-	st.header("經濟統計智慧客服")
+	st.header("Chatbot")
 
 	if st.button("💬 Start New Chat", key="new_chat"):
 			# 清空聊天記錄或執行開啟新聊天的邏輯
@@ -224,12 +220,12 @@ with col2:
 
 # 在第三列中放置選擇數據庫來源的多選下拉選單
 with col3:
+    default_database = st.session_state.get('database_sources', database_sources[0])
     # 下拉選單來選擇數據庫來源
-    default_databases = st.session_state.get('database_choices', database_sources)
-    database_choices = st.multiselect(
+    database_choices = st.selectbox(
         "Choose database sources:", 
-        database_sources, 
-        default=default_databases, 
+        database_sources,
+        index=database_sources.index(default_database), 
         disabled=disable_selection
     )
 
@@ -252,13 +248,16 @@ for msg in st.session_state.messages:
 if prompt := st.chat_input():
     st.session_state.model_choice = model_choice
     st.session_state.database_choices = database_choices
-    st.session_state.messages.append({"role": "user", "content": prompt})
     st.chat_message("user").write(prompt)
-    
-    if database_choices == ["NCKUH"]:
+
+    if database_choices != "None":
+        # Load documents (this should be done once, not on every rerun unless necessary)
+        pdf_elements = process_pdfs_brian(f"./{database_choices}")
+        add_documents_to_stores(pdf_elements)
+
         query_results = retriever.vectorstore.similarity_search_with_score(prompt)
         if query_results:
-            response = "Related information:\n\n"
+            res = "Related information:\n\n"
             for index, (doc, score) in enumerate(query_results[:3], start=1):
                 doc_info = (
 					f"第 {index} 筆資料\n\n"
@@ -268,14 +267,20 @@ if prompt := st.chat_input():
 					f"相似度分數: {score:.2f}\n\n"
 					"-------------\n"
 				)
-                response += doc_info
-            
-            complete_prompt = prompt + "\n\n" + response
+                res += doc_info
+
+            st.text(res)
+            complete_prompt = prompt + "\n\n" + res
         else:
             response = "No relevant documents found."
-        
-    elif "gpt" not in model_choice:
-	    response = generate_ollama_text(model_choice, prompt)
+            st.warning(response)
+    else:
+        complete_prompt = prompt 
+
+    st.session_state.messages.append({"role": "user", "content": complete_prompt})
+    
+    if "gpt" not in model_choice:
+	    response = generate_ollama_text(model_choice, complete_prompt)
     else:
 	    if not openai_api_key:
 	        st.info("Please add your OpenAI API key to continue.")
