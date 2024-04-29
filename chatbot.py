@@ -2,6 +2,15 @@ import streamlit as st
 from openai import OpenAI
 import matplotlib.pyplot as plt
 import requests
+import os
+import uuid
+from unstructured.partition.pdf import partition_pdf
+from langchain.embeddings.huggingface import HuggingFaceEmbeddings
+from chromadb.utils import embedding_functions
+from langchain.retrievers.multi_vector import MultiVectorRetriever
+from langchain.schema.document import Document
+from langchain.storage import InMemoryStore
+from langchain_community.vectorstores import Chroma
 
 # 假設這是存儲在某個地方的聊天歷史數據
 chat_history = {
@@ -54,7 +63,7 @@ chat_history = {
 
 # 假設這是可選擇的助理模型和數據庫來源
 assistant_models = ["gpt-3.5-turbo", "gpt-4", "yabi/breeze-7b-instruct-v1_0_q6_k", "jcai/taide-lx-7b-chat:latest", "llama3:latest"]
-database_sources = ["Database 1", "Database 2", "Database 3"]
+database_sources = ["NCKUH"]
 
 # 登入檢查和處理函數
 def check_login(username, password):
@@ -75,6 +84,46 @@ def generate_ollama_text(model, prompt):
         return response.json().get('response', '無返回響應。')
     else:
         return f'發生錯誤: {response.status_code}'
+
+# Function to process PDFs and extract contents
+def process_pdfs(directory):
+    pdf_files = [f for f in os.listdir(directory) if f.endswith('.pdf')]
+    all_elements = []
+    for pdf_file in pdf_files:
+        pdf_path = os.path.join(directory, pdf_file)
+        raw_pdf_elements = partition_pdf(
+            filename=pdf_path,
+            extract_images_in_pdf=False,
+            chunking_strategy="by_title",
+            max_characters=500,
+            new_after_n_chars=450,
+            combine_text_under_n_chars=400,
+            image_output_dir_path="."
+        )
+        all_elements.extend([{'title': pdf_file, 'contents': elements} for elements in raw_pdf_elements])
+    return all_elements
+
+# Setup the document and vector store
+embed_model = HuggingFaceEmbeddings(model_name="thenlper/gte-large")
+retriever = MultiVectorRetriever(
+    vectorstore=Chroma(collection_name="summaries", embedding_function=embed_model),
+    docstore=InMemoryStore(),
+    id_key="doc_id"
+)
+
+# Adding documents to the stores
+def add_documents_to_stores(elements):
+    doc_ids = [str(uuid.uuid4()) for _ in elements]
+    summary_elements = [
+        Document(page_content=str(element['contents']), metadata={"doc_id": doc_ids[i], 'pdf_title': element['title']})
+        for i, element in enumerate(elements)
+    ]
+    retriever.vectorstore.add_documents(summary_elements)
+    retriever.docstore.mset(list(zip(doc_ids, elements)))
+
+# Load documents (this should be done once, not on every rerun unless necessary)
+pdf_elements = process_pdfs("./NCKUH")
+add_documents_to_stores(pdf_elements)
 
 # 建立側邊欄並輸入 API Key
 with st.sidebar:
@@ -205,16 +254,35 @@ if prompt := st.chat_input():
     st.session_state.database_choices = database_choices
     st.session_state.messages.append({"role": "user", "content": prompt})
     st.chat_message("user").write(prompt)
-
-    if "gpt" not in model_choice:
-        response = generate_ollama_text(model_choice, prompt)
+    
+    if database_choices == ["NCKUH"]:
+        query_results = retriever.vectorstore.similarity_search_with_score(prompt)
+        if query_results:
+            response = "Related information:\n\n"
+            for index, (doc, score) in enumerate(query_results[:3], start=1):
+                doc_info = (
+					f"第 {index} 筆資料\n\n"
+					f"內容: {doc.page_content}\n\n"
+					f"文件標題: {doc.metadata.get('pdf_title')}\n\n"
+					f"文件 ID: {doc.metadata.get('doc_id')}\n\n"
+					f"相似度分數: {score:.2f}\n\n"
+					"-------------\n"
+				)
+                response += doc_info
+            
+            complete_prompt = prompt + "\n\n" + response
+        else:
+            response = "No relevant documents found."
+        
+    elif "gpt" not in model_choice:
+	    response = generate_ollama_text(model_choice, prompt)
     else:
-        if not openai_api_key:
-            st.info("Please add your OpenAI API key to continue.")
-            st.stop()
-        client = OpenAI(api_key=openai_api_key)
-        response = client.chat.completions.create(model=model_choice, messages=st.session_state.messages)
-        response = response.choices[0].message.content
+	    if not openai_api_key:
+	        st.info("Please add your OpenAI API key to continue.")
+	        st.stop()
+	    client = OpenAI(api_key=openai_api_key)
+	    response = client.chat.completions.create(model=model_choice, messages=st.session_state.messages)
+	    response = response.choices[0].message.content
 
     st.session_state.messages.append({"role": "assistant", "content": response})
     st.chat_message("assistant").write(response)
