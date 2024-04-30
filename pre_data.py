@@ -12,16 +12,19 @@ def process_pdfs(directory):
     all_elements = []
     for pdf_file in pdf_files:
         pdf_path = os.path.join(directory, pdf_file)
-        raw_pdf_elements = partition_pdf(
-            filename=pdf_path,
-            extract_images_in_pdf=False,
-            chunking_strategy="by_title",
-            max_characters=500,
-            new_after_n_chars=450,
-            combine_text_under_n_chars=400,
-            image_output_dir_path="."
-        )
-        all_elements.extend([{'title': pdf_file, 'contents': elements} for elements in raw_pdf_elements])
+        try:
+            raw_pdf_elements = partition_pdf(
+                filename=pdf_path,
+                extract_images_in_pdf=False,
+                chunking_strategy="by_title",
+                max_characters=400,
+                new_after_n_chars=350,
+                combine_text_under_n_chars=300,
+                image_output_dir_path="."
+            )
+            all_elements.extend([{'title': pdf_file, 'contents': elements} for elements in raw_pdf_elements])
+        except Exception as e:
+            print(f"Failed to process {pdf_file}: {e}")
     return all_elements
 
 def setup_vector_store(collection_name, model_name, id_key):
