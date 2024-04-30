@@ -1,125 +1,20 @@
 import streamlit as st
-from openai import OpenAI
 import matplotlib.pyplot as plt
-import requests
-import os
-import uuid
-from unstructured.partition.pdf import partition_pdf
-from langchain.embeddings.huggingface import HuggingFaceEmbeddings
-from chromadb.utils import embedding_functions
-from langchain.retrievers.multi_vector import MultiVectorRetriever
-from langchain.schema.document import Document
-from langchain.storage import InMemoryStore
-from langchain_community.vectorstores import Chroma
-
-# 假設這是存儲在某個地方的聊天歷史數據
-chat_history = {
-    "History1": {
-        "messages": [
-            {"role": "assistant", "content": "Hello, how can I help?"},
-            {"role": "user", "content": "What is the weather today?"},
-            {"role": "assistant", "content": "Today is a sunny day.", "source": ["今天的天氣如下：現在天氣：輕雨，攝氏 30 度。最高溫度：31 度。最低溫度：22 度。日出時間：上午 5:24。日落時間：下午 6:20。"]},
-        ],
-        "model": "gpt-3.5-turbo",
-        "databases": ["Database 1"]
-	},
-    "History2": {
-		"messages": [
-			{"role": "assistant", "content": "Hello, how can I help?"},
-			{"role": "user", "content": "Can you book a flight for me?"},
-			{"role": "assistant", "content": "Sure, where would you like to go?"}
-		],
-        "model": "gpt-3.5-turbo",
-        "databases": ["Database 2"]
-	},
-    "History3": {
-		"messages": [
-			{"role": "assistant", "content": "Hello, how can I help?"},
-			{"role": "user", "content": "What's the currency rate for EUR to USD?"},
-			{"role": "assistant", "content": "As of today, it is 1.13.", "source": ["今天的 歐元 (EUR) 兌 美元 (USD) 匯率為 1 歐元 = 1.07 美元", "https://www.bing.com/search?q=EUR+to+USD+currency+rate&FORM=wndcht&toWww=1&redig=25FDF18430034C909422C59892119F36"]}
-		],
-        "model": "gpt-3.5-turbo",
-        "databases": ["Database 3"]
-	},
-    "History4": {
-		"messages": [
-			{"role": "assistant", "content": "Hello, how can I help?"},
-			{"role": "user", "content": "I need directions to the nearest hospital."},
-			{"role": "assistant", "content": "Here is the map for the nearest hospital.","source": ["臺北市立聯合醫院中興院區：地址：臺北市大同區鄭州路145號電話：02 2552 3234", "西園醫院：地址：臺北市萬華區西園路二段270號電話：02 2307 6968"]}
-		],
-        "model": "gpt-4",
-        "databases": ["Database 1", "Database 2"]
-	},
-    "History5": {
-		"messages": [
-			{"role": "assistant", "content": "Hello, how can I help?"},
-			{"role": "user", "content": "Can you play some music?"},
-			{"role": "assistant", "content": "Playing your favorite playlist now."}
-		],
-		"model": "Taiwan-LLM-13B-2.0-chat",
-		"databases": ["Database 1", "Database 2", "Database 3"]
-	}
-}
+from history import chat_history
+from user import check_login
+from model import get_response_from_ollama, get_response_from_openai
+from pre_data import setup_vector_store
+from database import search_documents
 
 # 假設這是可選擇的助理模型和數據庫來源
 assistant_models = ["gpt-3.5-turbo", "gpt-4", "yabi/breeze-7b-instruct-v1_0_q6_k", "jcai/taide-lx-7b-chat:latest", "llama3:latest"]
 database_sources = ["None", "NCKUH_Brian", "NCKUH_Gary"]
 
-# 登入檢查和處理函數
-def check_login(username, password):
-    # 這裡應該是你的登入邏輯
-    # 如果登入成功，返回 True
-    # 這裡我假設任何非空的用戶名和密碼都代表登入成功
-    return username != "" and password != ""
-
-def generate_ollama_text(model, prompt):
-    url = "http://localhost:11434/api/generate"
-    data = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-    }
-    response = requests.post(url, json=data)
-    if response.status_code == 200:
-        return response.json().get('response', '無返回響應。')
-    else:
-        return f'發生錯誤: {response.status_code}'
-
-# Function to process PDFs and extract contents
-def process_pdfs_brian(directory):
-    pdf_files = [f for f in os.listdir(directory) if f.endswith('.pdf')]
-    all_elements = []
-    for pdf_file in pdf_files:
-        pdf_path = os.path.join(directory, pdf_file)
-        raw_pdf_elements = partition_pdf(
-            filename=pdf_path,
-            extract_images_in_pdf=False,
-            chunking_strategy="by_title",
-            max_characters=500,
-            new_after_n_chars=450,
-            combine_text_under_n_chars=400,
-            image_output_dir_path="."
-        )
-        all_elements.extend([{'title': pdf_file, 'contents': elements} for elements in raw_pdf_elements])
-    return all_elements
-
 # Setup the document and vector store
-embed_model = HuggingFaceEmbeddings(model_name="thenlper/gte-large")
-retriever = MultiVectorRetriever(
-    vectorstore=Chroma(collection_name="summaries", embedding_function=embed_model),
-    docstore=InMemoryStore(),
-    id_key="doc_id"
-)
-
-# Adding documents to the stores
-def add_documents_to_stores(elements):
-    doc_ids = [str(uuid.uuid4()) for _ in elements]
-    summary_elements = [
-        Document(page_content=str(element['contents']), metadata={"doc_id": doc_ids[i], 'pdf_title': element['title']})
-        for i, element in enumerate(elements)
-    ]
-    retriever.vectorstore.add_documents(summary_elements)
-    retriever.docstore.mset(list(zip(doc_ids, elements)))
+collection_name="summaries"
+model_name="thenlper/gte-large"
+id_key="doc_id"
+retriever = setup_vector_store(collection_name, model_name, id_key)
 
 # 建立側邊欄並輸入 API Key
 with st.sidebar:
@@ -251,43 +146,25 @@ if prompt := st.chat_input():
     st.chat_message("user").write(prompt)
 
     if database_choices != "None":
-        # Load documents (this should be done once, not on every rerun unless necessary)
-        pdf_elements = process_pdfs_brian(f"./{database_choices}")
-        add_documents_to_stores(pdf_elements)
-
-        query_results = retriever.vectorstore.similarity_search_with_score(prompt)
-        if query_results:
-            res = "Related information:\n\n"
-            for index, (doc, score) in enumerate(query_results[:3], start=1):
-                doc_info = (
-					f"第 {index} 筆資料\n\n"
-					f"內容: {doc.page_content}\n\n"
-					f"文件標題: {doc.metadata.get('pdf_title')}\n\n"
-					f"文件 ID: {doc.metadata.get('doc_id')}\n\n"
-					f"相似度分數: {score:.2f}\n\n"
-					"-------------\n"
-				)
-                res += doc_info
-
-            st.text(res)
-            complete_prompt = prompt + "\n\n" + res
+        res = search_documents(retriever, prompt, database_choices)
+        if res.startswith("No relevant documents found."):
+            st.warning(res)
+            complete_prompt = prompt  # 如果沒有找到相關文件，則將提示作為完整的提示
         else:
-            response = "No relevant documents found."
-            st.warning(response)
+            st.text(res)
+            complete_prompt = prompt + "\n\n" + res  # 將找到的文件資訊追加到提示中
     else:
         complete_prompt = prompt 
 
     st.session_state.messages.append({"role": "user", "content": complete_prompt})
     
     if "gpt" not in model_choice:
-	    response = generate_ollama_text(model_choice, complete_prompt)
+	    response = get_response_from_ollama(model_choice, complete_prompt)
     else:
 	    if not openai_api_key:
 	        st.info("Please add your OpenAI API key to continue.")
 	        st.stop()
-	    client = OpenAI(api_key=openai_api_key)
-	    response = client.chat.completions.create(model=model_choice, messages=st.session_state.messages)
-	    response = response.choices[0].message.content
+	    response = get_response_from_openai(openai_api_key, model_choice, st.session_state.messages)
 
     st.session_state.messages.append({"role": "assistant", "content": response})
     st.chat_message("assistant").write(response)
