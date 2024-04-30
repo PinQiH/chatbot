@@ -7,7 +7,7 @@ from langchain.retrievers.multi_vector import MultiVectorRetriever
 from langchain_community.vectorstores import Chroma
 from langchain.storage import InMemoryStore
 
-def process_pdfs_brian(directory):
+def process_pdfs(directory):
     pdf_files = [f for f in os.listdir(directory) if f.endswith('.pdf')]
     all_elements = []
     for pdf_file in pdf_files:
@@ -21,25 +21,6 @@ def process_pdfs_brian(directory):
             combine_text_under_n_chars=400,
             image_output_dir_path="."
         )
-        all_elements.extend([{'title': pdf_file, 'contents': elements} for elements in raw_pdf_elements])
-    return all_elements
-
-def process_pdfs_gary(directory):
-    pdf_files = [f for f in os.listdir(directory) if f.endswith('.pdf')]
-    all_elements = []
-    for pdf_file in pdf_files:
-        pdf_path = os.path.join(directory, pdf_file)
-        raw_pdf_elements = partition_pdf(
-            filename=pdf_path,
-            extract_images_in_pdf=False,
-            # infer_table_structure=True,
-            #chunking_strategy="by_title",
-            max_characters=500,
-            new_after_n_chars=450,
-            combine_text_under_n_chars=400,
-            image_output_dir_path="."
-        )
-
         all_elements.extend([{'title': pdf_file, 'contents': elements} for elements in raw_pdf_elements])
     return all_elements
 

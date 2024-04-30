@@ -1,7 +1,7 @@
-from pre_data import process_pdfs_brian, process_pdfs_gary, add_documents_to_stores
+from pre_data import process_pdfs, add_documents_to_stores
 
 def search_documents(retriever, prompt, database_choices):
-    pdf_elements = process_pdfs_brian(f"./{database_choices}")
+    pdf_elements = process_pdfs(f"./{database_choices}")
     add_documents_to_stores(retriever, pdf_elements)
 
     query_results = retriever.vectorstore.similarity_search_with_score(prompt)
